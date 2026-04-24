@@ -1108,22 +1108,26 @@ function serveVendor(requestUrl, response) {
   });
 }
 
-const server = http.createServer((request, response) => {
+function handleRequest(request, response) {
   const requestUrl = new URL(request.url, `http://${request.headers.host}`);
+  const pathname = requestUrl.pathname;
 
-  if (requestUrl.pathname.startsWith("/vendor/")) {
+  if (pathname.startsWith("/vendor/") || pathname.startsWith("/api/vendor/")) {
+    if (pathname.startsWith("/api/vendor/")) {
+      requestUrl.pathname = pathname.slice("/api".length);
+    }
     serveVendor(requestUrl, response);
     return;
   }
 
-  if (requestUrl.pathname === "/grabmaps-loader.js") {
+  if (pathname === "/grabmaps-loader.js" || pathname === "/api/grabmaps-loader.js") {
     const libraryUrl = getClientConfig().grab.libraryUrl;
     const body = `import ${JSON.stringify(libraryUrl)};\n`;
     send(response, 200, body, "text/javascript; charset=utf-8");
     return;
   }
 
-  if (requestUrl.pathname === "/config.js") {
+  if (pathname === "/config.js" || pathname === "/api/config.js") {
     const body = `window.APP_CONFIG = ${JSON.stringify(getClientConfig(), null, 2)};\n`;
     send(response, 200, body, "text/javascript; charset=utf-8");
     return;
@@ -1170,11 +1174,21 @@ const server = http.createServer((request, response) => {
   }
 
   serveStatic(requestUrl, response);
-});
+}
 
-const port = Number(process.env.PORT || parseEnvFile(envPath).PORT || 4173);
-const host = process.env.HOST || parseEnvFile(envPath).HOST || "127.0.0.1";
+function startServer() {
+  const server = http.createServer(handleRequest);
+  const port = Number(process.env.PORT || parseEnvFile(envPath).PORT || 4173);
+  const host = process.env.HOST || parseEnvFile(envPath).HOST || "127.0.0.1";
 
-server.listen(port, host, () => {
-  console.log(`Grab Route Starter running at http://${host}:${port}`);
-});
+  server.listen(port, host, () => {
+    console.log(`Grab Route Starter running at http://${host}:${port}`);
+  });
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = handleRequest;
+module.exports.handleRequest = handleRequest;

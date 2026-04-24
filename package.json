@@ -9,7 +9,7 @@
     "check": "node --check server.js && node --check public/app.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": "22.x"
   },
   "dependencies": {
     "maplibre-gl": "^4.7.1"

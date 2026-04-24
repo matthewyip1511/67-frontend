@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "rewrites": [
+    {
+      "source": "/config.js",
+      "destination": "/api/config.js"
+    },
+    {
+      "source": "/grabmaps-loader.js",
+      "destination": "/api/grabmaps-loader.js"
+    },
+    {
+      "source": "/vendor/:path*",
+      "destination": "/api/vendor/:path*"
+    }
+  ]
+}

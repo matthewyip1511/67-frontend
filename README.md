@@ -16,6 +16,31 @@ Then open:
 http://localhost:4173
 ```
 
+## Deploy to Vercel
+
+This project is ready for Vercel. Static files are served from `public/`, while `api/[...path].js`
+uses the same server-side proxy handlers as local development so `GRAB_API_KEY` is never sent to
+the browser.
+
+1. Push the repo to GitHub, GitLab, or Bitbucket.
+2. Import the project in Vercel.
+3. Leave the framework preset as `Other`.
+4. Add the environment variables from `.env.example` in Vercel Project Settings -> Environment
+   Variables. At minimum, set `GRAB_API_KEY`.
+5. Deploy.
+
+For CLI deployment:
+
+```bash
+npm i -g vercel
+vercel
+vercel env add GRAB_API_KEY
+vercel --prod
+```
+
+Do not prefix the private key with `NEXT_PUBLIC_`, `VITE_`, or any other browser-exposed naming
+convention. The app reads `GRAB_API_KEY` only inside the Vercel serverless function.
+
 ## Environment
 
 Create a local `.env` file when you are ready to customise the app:
