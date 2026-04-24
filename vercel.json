@@ -2,6 +2,10 @@
   "version": 2,
   "rewrites": [
     {
+      "source": "/api/grab-resource:path*",
+      "destination": "/api/grab-resource.js?resourceSuffix=:path*"
+    },
+    {
       "source": "/config.js",
       "destination": "/api/config.js"
     },

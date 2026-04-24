@@ -945,7 +945,11 @@ async function handleMapStyle(requestUrl, response) {
 async function handleGrabResource(requestUrl, response) {
   const env = getEnv();
   const baseResourceUrl = requestUrl.searchParams.get("url");
-  const suffix = requestUrl.pathname.slice("/api/grab-resource".length);
+  const rewrittenSuffix = requestUrl.searchParams.get("resourceSuffix") || "";
+  const pathSuffix = requestUrl.pathname
+    .replace(/^\/api\/grab-resource(?:\.js)?/, "")
+    .replace(/^\/api\/grab-resource/, "");
+  const suffix = rewrittenSuffix || (pathSuffix === ".js" ? "" : pathSuffix);
   const resourceUrl = baseResourceUrl ? `${baseResourceUrl}${suffix}` : "";
 
   try {
