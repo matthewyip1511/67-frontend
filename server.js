@@ -56,6 +56,27 @@ function getEnv() {
   };
 }
 
+function firstHeaderValue(value) {
+  if (Array.isArray(value)) {
+    return value[0] || "";
+  }
+
+  return String(value || "").split(",")[0].trim();
+}
+
+function getRequestOrigin(request) {
+  const forwardedProto = firstHeaderValue(
+    request.headers["x-forwarded-proto"] || request.headers["x-vercel-forwarded-proto"]
+  );
+  const forwardedHost = firstHeaderValue(
+    request.headers["x-forwarded-host"] || request.headers["x-vercel-forwarded-host"]
+  );
+  const proto = forwardedProto || (request.socket && request.socket.encrypted ? "https" : "http");
+  const host = forwardedHost || firstHeaderValue(request.headers.host) || "127.0.0.1";
+
+  return `${proto}://${host}`;
+}
+
 function numberFromEnv(env, key, fallback) {
   const value = Number(env[key]);
   return Number.isFinite(value) ? value : fallback;
@@ -1109,7 +1130,7 @@ function serveVendor(requestUrl, response) {
 }
 
 function handleRequest(request, response) {
-  const requestUrl = new URL(request.url, `http://${request.headers.host}`);
+  const requestUrl = new URL(request.url, getRequestOrigin(request));
   const pathname = requestUrl.pathname;
 
   if (pathname.startsWith("/vendor/") || pathname.startsWith("/api/vendor/")) {
