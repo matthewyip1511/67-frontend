@@ -11,19 +11,25 @@ const elements = {
   mapRouteMeta: document.querySelector("#mapRouteMeta"),
   form: document.querySelector("#routeForm"),
   startInput: document.querySelector("#startInput"),
+  startSuggestions: document.querySelector("#startSuggestions"),
   endInput: document.querySelector("#endInput"),
+  endSuggestions: document.querySelector("#endSuggestions"),
   include67Toggle: document.querySelector("#include67Toggle"),
   radius67Input: document.querySelector("#radius67Input"),
   status67: document.querySelector("#status67"),
   list67: document.querySelector("#list67"),
   swapButton: document.querySelector("#swapButton"),
   routeButton: document.querySelector("#routeButton"),
+  profileSelect: document.querySelector("#profileSelect"),
   connectionStatus: document.querySelector("#connectionStatus"),
   statusLine: document.querySelector("#statusLine"),
   distanceValue: document.querySelector("#distanceValue"),
   durationValue: document.querySelector("#durationValue"),
   startValue: document.querySelector("#startValue"),
-  endValue: document.querySelector("#endValue")
+  startAddressValue: document.querySelector("#startAddressValue"),
+  endValue: document.querySelector("#endValue"),
+  endAddressValue: document.querySelector("#endAddressValue"),
+  routeStopsList: document.querySelector("#routeStopsList")
 };
 
 const state = {
@@ -34,22 +40,65 @@ const state = {
   stops67: [],
   include67: false,
   radius67Km: 0.8,
+  profile: "driving",
   zoom: config.map.defaultZoom,
   grabMapsClient: null,
   maplibre: null,
   maplibreReady: false,
   mapMarkers: [],
   previewRequestId: 0,
-  enrichmentRequestId: 0
+  enrichmentRequestId: 0,
+  suggestionRequestId: {
+    start: 0,
+    end: 0
+  }
+};
+
+const suggestionTimers = {
+  start: null,
+  end: null
 };
 
 elements.startInput.value = pointToInput(config.defaults.start);
 elements.endInput.value = pointToInput(config.defaults.end);
 elements.connectionStatus.textContent = `${config.geocoding.providerLabel} + ${config.routing.providerLabel}`;
 elements.radius67Input.value = state.radius67Km;
+elements.profileSelect.value = state.profile;
 
 function pointToInput(point) {
   return point.label || `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`;
+}
+
+const fallbackAddressByLabel = {
+  "marina bay sands": "10 Bayfront Avenue, Marina Bay Sands, Singapore, 018956",
+  "the shoppes at marina bay sands": "2A Bayfront Avenue, The Shoppes at Marina Bay Sands, Singapore, 018958",
+  "290 orchard rd": "290 Orchard Road, Singapore, 238859",
+  "290 orchard road": "290 Orchard Road, Singapore, 238859",
+  paragon: "290 Orchard Road, Singapore, 238859"
+};
+
+function pointName(point) {
+  return point && point.label ? point.label : "-";
+}
+
+function pointAddress(point) {
+  if (!point) {
+    return "";
+  }
+
+  return point.address || fallbackAddressByLabel[normalizeLocationInput(point.label || "")] || "";
+}
+
+function pointCoordinates(point) {
+  if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) {
+    return "";
+  }
+
+  return `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`;
+}
+
+function pointDetail(point) {
+  return pointAddress(point) || pointCoordinates(point);
 }
 
 function setStatus(message, isError = false) {
@@ -57,16 +106,62 @@ function setStatus(message, isError = false) {
   elements.statusLine.classList.toggle("error", isError);
 }
 
-function markerElement(type, point) {
+function markerElement(type, point, options = {}) {
   const marker = document.createElement("div");
-  const label = type === "start" ? "Start" : type === "end" ? "End" : "67";
+  const label =
+    type === "start" ? "Start" : type === "end" ? "End" : options.badge ? `67-${options.badge}` : "67";
   marker.className = `map-pin ${type}`;
-  marker.title = point ? `${label}: ${point.label}` : label;
-  marker.innerHTML = `
-    <span class="map-pin-dot"></span>
-    <span class="map-pin-label">${label}</span>
-  `;
+  marker.tabIndex = 0;
+  marker.setAttribute("aria-label", `${label}${point ? ` ${pointName(point)}` : ""}`);
+  marker.title = point
+    ? `${label}: ${pointName(point)}${pointDetail(point) ? ` - ${pointDetail(point)}` : ""}`
+    : label;
+
+  const dot = document.createElement("span");
+  dot.className = "map-pin-dot";
+  dot.textContent = options.badge || "";
+
+  const labelWrap = document.createElement("span");
+  labelWrap.className = "map-pin-label";
+
+  const typeLabel = document.createElement("strong");
+  typeLabel.textContent = type === "stop67" && point ? pointName(point) : label;
+  labelWrap.append(typeLabel);
+
+  if (point) {
+    const detail = document.createElement("small");
+    detail.textContent = pointDetail(point) || pointName(point);
+    labelWrap.append(detail);
+  }
+
+  marker.append(dot, labelWrap);
   return marker;
+}
+
+function lngLatFromGrabLocation(location) {
+  if (!Array.isArray(location) || location.length < 2) {
+    return null;
+  }
+
+  const first = Number(location[0]);
+  const second = Number(location[1]);
+  if (!Number.isFinite(first) || !Number.isFinite(second)) {
+    return null;
+  }
+
+  const looksLatLng = Math.abs(first) <= 90 && Math.abs(second) <= 180;
+  return looksLatLng ? [second, first] : [first, second];
+}
+
+function routeWaypointLngLat(index, fallbackPoint) {
+  const waypoint = state.route && Array.isArray(state.route.waypoints) ? state.route.waypoints[index] : null;
+  const snapped = waypoint ? lngLatFromGrabLocation(waypoint.location) : null;
+
+  if (snapped) {
+    return snapped;
+  }
+
+  return [fallbackPoint.lng, fallbackPoint.lat];
 }
 
 function formatDistance(meters) {
@@ -100,9 +195,139 @@ function formatRadius(km) {
   return km >= 1 ? `${km.toFixed(1)} km` : `${Math.round(km * 1000)} m`;
 }
 
+function formatProfile(profile = state.profile) {
+  return profile === "walking" ? "Walking" : "Driving";
+}
+
 function set67Status(message, isError = false) {
   elements.status67.textContent = message;
   elements.status67.classList.toggle("error", isError);
+}
+
+function suggestionElements(kind) {
+  return kind === "start"
+    ? { input: elements.startInput, list: elements.startSuggestions }
+    : { input: elements.endInput, list: elements.endSuggestions };
+}
+
+function hideSuggestions(kind) {
+  const { input, list } = suggestionElements(kind);
+  list.hidden = true;
+  list.replaceChildren();
+  input.setAttribute("aria-expanded", "false");
+}
+
+function showSuggestionMessage(kind, message) {
+  const { input, list } = suggestionElements(kind);
+  const item = document.createElement("div");
+  item.className = "suggestion-message";
+  item.textContent = message;
+  list.replaceChildren(item);
+  list.hidden = false;
+  input.setAttribute("aria-expanded", "true");
+}
+
+function resetRouteAfterLocationEdit() {
+  state.baseRoute = null;
+  state.route = null;
+  state.stops67 = [];
+  state.enrichmentRequestId += 1;
+  updateSummary();
+  renderMap();
+}
+
+function applySuggestion(kind, point) {
+  const { input } = suggestionElements(kind);
+  if (kind === "start") {
+    state.start = point;
+  } else {
+    state.end = point;
+  }
+
+  input.value = pointToInput(point);
+  hideSuggestions(kind);
+  resetRouteAfterLocationEdit();
+}
+
+function renderSuggestions(kind, places) {
+  const { input, list } = suggestionElements(kind);
+
+  if (!places.length) {
+    showSuggestionMessage(kind, "No Grab Places suggestions found.");
+    return;
+  }
+
+  list.replaceChildren(
+    ...places.slice(0, 5).map((place, index) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "suggestion-item";
+      item.setAttribute("role", "option");
+      item.id = `${kind}Suggestion${index}`;
+
+      const name = document.createElement("strong");
+      name.textContent = pointName(place);
+
+      const address = document.createElement("small");
+      address.textContent = pointDetail(place);
+
+      item.append(name, address);
+      item.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+      });
+      item.addEventListener("click", () => applySuggestion(kind, place));
+      return item;
+    })
+  );
+
+  list.hidden = false;
+  input.setAttribute("aria-expanded", "true");
+}
+
+async function fetchSuggestions(query) {
+  const url = new URL("/api/suggest", window.location.origin);
+  url.searchParams.set("q", query);
+  url.searchParams.set("limit", "5");
+
+  const response = await fetch(url);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || `Suggestions failed with status ${response.status}`);
+  }
+
+  return payload.places || [];
+}
+
+function queueSuggestions(kind) {
+  const { input } = suggestionElements(kind);
+  const query = input.value.trim();
+  const requestId = (state.suggestionRequestId[kind] += 1);
+
+  window.clearTimeout(suggestionTimers[kind]);
+
+  if (query.length < 2 || parseCoordinates(query)) {
+    hideSuggestions(kind);
+    return;
+  }
+
+  suggestionTimers[kind] = window.setTimeout(async () => {
+    showSuggestionMessage(kind, "Searching Grab Places...");
+
+    try {
+      const places = await fetchSuggestions(query);
+      if (requestId !== state.suggestionRequestId[kind]) {
+        return;
+      }
+
+      renderSuggestions(kind, places);
+    } catch (error) {
+      if (requestId !== state.suggestionRequestId[kind]) {
+        return;
+      }
+
+      showSuggestionMessage(kind, error.message || "Suggestions unavailable.");
+    }
+  }, 220);
 }
 
 function update67Panel() {
@@ -111,12 +336,27 @@ function update67Panel() {
   }
 
   elements.list67.replaceChildren(
-    ...state.stops67.map((stop) => {
+    ...state.stops67.map((stop, index) => {
       const item = document.createElement("li");
       const distance = Number.isFinite(stop.distanceFromRouteMeters)
         ? ` (${Math.round(stop.distanceFromRouteMeters)} m from route)`
         : "";
-      item.textContent = `${stop.label}${distance}`;
+
+      const badge = document.createElement("span");
+      badge.className = "stop-index";
+      badge.textContent = `67-${index + 1}`;
+
+      const copy = document.createElement("span");
+      copy.className = "stop-copy";
+
+      const name = document.createElement("strong");
+      name.textContent = pointName(stop);
+
+      const address = document.createElement("small");
+      address.textContent = `${pointDetail(stop) || pointName(stop)}${distance}`;
+
+      copy.append(name, address);
+      item.append(badge, copy);
       return item;
     })
   );
@@ -138,6 +378,41 @@ function update67Panel() {
   set67Status(`On. No 67 stops selected yet inside ${formatRadius(state.radius67Km)}.`);
 }
 
+function updateRouteStopsList() {
+  if (!elements.routeStopsList) {
+    return;
+  }
+
+  const stops = [
+    { type: "Start", point: state.start },
+    ...state.stops67.map((stop, index) => ({ type: `67 stop ${index + 1}`, point: stop })),
+    { type: "End", point: state.end }
+  ];
+
+  elements.routeStopsList.replaceChildren(
+    ...stops.map(({ type, point }) => {
+      const item = document.createElement("li");
+
+      const badge = document.createElement("span");
+      badge.className = "route-stop-badge";
+      badge.textContent = type;
+
+      const copy = document.createElement("span");
+      copy.className = "route-stop-copy";
+
+      const name = document.createElement("strong");
+      name.textContent = pointName(point);
+
+      const address = document.createElement("small");
+      address.textContent = pointDetail(point) || "Address pending from Grab Places";
+
+      copy.append(name, address);
+      item.append(badge, copy);
+      return item;
+    })
+  );
+}
+
 function updateMapRouteCard() {
   if (!elements.mapRouteCard) {
     return;
@@ -155,7 +430,9 @@ function updateMapRouteCard() {
     ? ` | ${state.stops67.length} x 67 stop${state.stops67.length === 1 ? "" : "s"}`
     : "";
   elements.mapRouteMeta.textContent = state.route
-    ? `${formatDistance(state.route.distance)} | ${formatDuration(state.route.duration)}${stopCopy}`
+    ? `${formatProfile(state.route.profile)} | ${formatDistance(state.route.distance)} | ${formatDuration(
+        state.route.duration
+      )}${stopCopy}`
     : "Pins ready. Press Route to calculate the full path.";
 }
 
@@ -220,20 +497,26 @@ async function geocode(value) {
   }
 
   const knownPoint = knownPointForInput(value);
-  if (knownPoint) {
-    return knownPoint;
-  }
-
   const url = new URL("/api/geocode", window.location.origin);
   url.searchParams.set("q", value);
 
   const response = await fetch(url);
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
+    if (knownPoint) {
+      return knownPoint;
+    }
+
     throw new Error(payload.error || `Geocoding failed with status ${response.status}`);
   }
 
-  return response.json();
+  const resolvedPoint = await response.json();
+  return {
+    ...(knownPoint || {}),
+    ...resolvedPoint,
+    label: resolvedPoint.label || (knownPoint && knownPoint.label) || value,
+    address: resolvedPoint.address || (knownPoint && knownPoint.address) || ""
+  };
 }
 
 async function fetchRoute(start, end, waypoints = []) {
@@ -242,6 +525,7 @@ async function fetchRoute(start, end, waypoints = []) {
   url.searchParams.set("startLng", start.lng);
   url.searchParams.set("endLat", end.lat);
   url.searchParams.set("endLng", end.lng);
+  url.searchParams.set("profile", state.profile);
   if (waypoints.length) {
     url.searchParams.set("waypoints", JSON.stringify(waypoints));
   }
@@ -564,8 +848,15 @@ async function initializeGrabMapsLibraryMap() {
     state.maplibre = getMapLibreFromGrabMapsMap(grabMapsMap);
 
     if (!state.maplibre) {
-      setStatus("GrabMaps library loaded");
-      return true;
+      if (grabMapsMap && typeof grabMapsMap.remove === "function") {
+        grabMapsMap.remove();
+      } else {
+        elements.grabMap.replaceChildren();
+      }
+
+      state.grabMapsClient = null;
+      setStatus("GrabMaps library loaded without route-layer access. Falling back to Grab style map.");
+      return false;
     }
 
     if (typeof state.maplibre.once === "function") {
@@ -606,6 +897,11 @@ async function initializeGrabStyleMap() {
     }
 
     const style = await response.json();
+    if (state.maplibre && typeof state.maplibre.remove === "function") {
+      state.maplibre.remove();
+    }
+    elements.grabMap.replaceChildren();
+
     state.maplibre = new window.maplibregl.Map({
       container: elements.grabMap,
       style,
@@ -633,7 +929,11 @@ async function initializeGrabStyleMap() {
 
     state.maplibreReady = true;
     elements.map.classList.add("using-grab-style");
-    tuneGrabBaseStyle(state.maplibre);
+    try {
+      tuneGrabBaseStyle(state.maplibre);
+    } catch (error) {
+      console.warn("Grab style tuning skipped:", error.message || error);
+    }
     setStatus("Grab map style ready via MapLibre");
     return true;
   } catch (error) {
@@ -714,28 +1014,60 @@ function renderMapLibre() {
     });
   }
 
+  const stopFeatures = state.stops67.map((stop, index) => ({
+    type: "Feature",
+    geometry: {
+      type: "Point",
+      coordinates: routeWaypointLngLat(index + 1, stop)
+    },
+    properties: {
+      label: pointName(stop),
+      number: String(index + 1)
+    }
+  }));
+  ["route-stop-labels", "route-stop-numbers", "route-stop-dots"].forEach((layerId) => {
+    if (state.maplibre.getLayer(layerId)) {
+      state.maplibre.removeLayer(layerId);
+    }
+  });
+  if (state.maplibre.getSource("route-stops")) {
+    state.maplibre.removeSource("route-stops");
+  }
+
   state.mapMarkers.forEach((marker) => marker.remove());
-  state.mapMarkers = [
-    new window.maplibregl.Marker({ element: markerElement("start", state.start) })
-      .setLngLat([state.start.lng, state.start.lat])
-      .addTo(state.maplibre),
-    new window.maplibregl.Marker({ element: markerElement("end", state.end) })
-      .setLngLat([state.end.lng, state.end.lat])
+  const startLngLat = routeWaypointLngLat(0, state.start);
+  const endLngLat = routeWaypointLngLat(state.stops67.length + 1, state.end);
+  const stopMarkers = state.stops67.map((stop, index) =>
+    new window.maplibregl.Marker({
+      element: markerElement("stop67", stop, { badge: String(index + 1) }),
+      anchor: "center"
+    })
+      .setLngLat(stopFeatures[index].geometry.coordinates)
       .addTo(state.maplibre)
-  ].concat(
-    state.stops67.map((stop) =>
-      new window.maplibregl.Marker({ element: markerElement("stop67", stop) })
-        .setLngLat([stop.lng, stop.lat])
-        .addTo(state.maplibre)
-    )
   );
+
+  state.mapMarkers = [
+    new window.maplibregl.Marker({
+      element: markerElement("start", state.start),
+      anchor: "center"
+    })
+      .setLngLat(startLngLat)
+      .addTo(state.maplibre),
+    ...stopMarkers,
+    new window.maplibregl.Marker({
+      element: markerElement("end", state.end),
+      anchor: "center"
+    })
+      .setLngLat(endLngLat)
+      .addTo(state.maplibre)
+  ];
 
   const bounds = new window.maplibregl.LngLatBounds();
   [
     ...coordinates,
-    [state.start.lng, state.start.lat],
-    [state.end.lng, state.end.lat],
-    ...state.stops67.map((stop) => [stop.lng, stop.lat])
+    startLngLat,
+    endLngLat,
+    ...stopFeatures.map((feature) => feature.geometry.coordinates)
   ].forEach(
     (coordinate) => bounds.extend(coordinate)
   );
@@ -762,10 +1094,13 @@ function renderMap() {
 function updateSummary() {
   elements.distanceValue.textContent = state.route ? formatDistance(state.route.distance) : "-";
   elements.durationValue.textContent = state.route ? formatDuration(state.route.duration) : "-";
-  elements.startValue.textContent = state.start.label;
-  elements.endValue.textContent = state.end.label;
+  elements.startValue.textContent = pointName(state.start);
+  elements.startAddressValue.textContent = pointDetail(state.start) || "-";
+  elements.endValue.textContent = pointName(state.end);
+  elements.endAddressValue.textContent = pointDetail(state.end) || "-";
   updateMapRouteCard();
   update67Panel();
+  updateRouteStopsList();
 }
 
 async function resolveInputLocations() {
@@ -920,10 +1255,10 @@ async function calculateRoute({ revealMap = false } = {}) {
 
     setStatus(
       state.stops67.length
-        ? `Route ready via ${route.provider || config.routing.providerLabel} with ${state.stops67.length} 67 stop${
-            state.stops67.length === 1 ? "" : "s"
-          }`
-        : `Route ready via ${route.provider || config.routing.providerLabel}`
+        ? `${formatProfile(route.profile)} route ready via ${route.provider || config.routing.providerLabel} with ${
+            state.stops67.length
+          } 67 stop${state.stops67.length === 1 ? "" : "s"}`
+        : `${formatProfile(route.profile)} route ready via ${route.provider || config.routing.providerLabel}`
     );
   } catch (error) {
     setStatus(error.message || "Could not calculate route", true);
@@ -942,6 +1277,8 @@ elements.swapButton.addEventListener("click", () => {
   elements.startInput.value = elements.endInput.value;
   elements.endInput.value = currentStart;
   [state.start, state.end] = [state.end, state.start];
+  hideSuggestions("start");
+  hideSuggestions("end");
   state.baseRoute = null;
   state.route = null;
   state.stops67 = [];
@@ -971,7 +1308,7 @@ elements.include67Toggle.addEventListener("change", async () => {
 
   const applied = await apply67Route(state.baseRoute);
   if (applied) {
-    setStatus(`Route ready via ${config.routing.providerLabel}`);
+    setStatus(`${formatProfile()} route ready via ${config.routing.providerLabel}`);
   }
 });
 
@@ -988,13 +1325,45 @@ elements.radius67Input.addEventListener("change", async () => {
   await apply67Route(state.baseRoute);
 });
 
+elements.profileSelect.addEventListener("change", () => {
+  state.profile = elements.profileSelect.value === "walking" ? "walking" : "driving";
+  calculateRoute({ revealMap: false });
+});
+
 elements.startInput.addEventListener("change", () => {
+  hideSuggestions("start");
   previewInputLocations({ quiet: true });
 });
 
 elements.endInput.addEventListener("change", () => {
+  hideSuggestions("end");
   previewInputLocations({ quiet: true });
 });
+
+function setupSuggestionInput(kind) {
+  const { input } = suggestionElements(kind);
+
+  input.addEventListener("input", () => {
+    queueSuggestions(kind);
+  });
+
+  input.addEventListener("focus", () => {
+    queueSuggestions(kind);
+  });
+
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      hideSuggestions(kind);
+    }
+  });
+
+  input.addEventListener("blur", () => {
+    window.setTimeout(() => hideSuggestions(kind), 140);
+  });
+}
+
+setupSuggestionInput("start");
+setupSuggestionInput("end");
 
 window.addEventListener("resize", renderMap);
 

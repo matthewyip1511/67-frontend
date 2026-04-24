@@ -485,7 +485,18 @@ function decodePolyline(encoded, precision = 6) {
   return coordinates;
 }
 
-async function routeGrab(start, end, env, waypoints = []) {
+function readRouteProfile(requestUrl, env) {
+  const profile = requestUrl.searchParams.get("profile") || env.GRAB_ROUTE_PROFILE || "driving";
+  const allowedProfiles = new Set(["driving", "walking"]);
+
+  if (!allowedProfiles.has(profile)) {
+    throw new Error("Route profile must be driving or walking.");
+  }
+
+  return profile;
+}
+
+async function routeGrab(start, end, env, waypoints = [], profile = env.GRAB_ROUTE_PROFILE || "driving") {
   if (!env.GRAB_API_KEY) {
     throw new Error("GRAB_API_KEY is required for Grab routing.");
   }
@@ -498,7 +509,7 @@ async function routeGrab(start, end, env, waypoints = []) {
   coordinates.forEach((coordinate) => {
     url.searchParams.append("coordinates", `${coordinate.lng},${coordinate.lat}`);
   });
-  url.searchParams.set("profile", env.GRAB_ROUTE_PROFILE || "driving");
+  url.searchParams.set("profile", profile);
   url.searchParams.set("overview", env.GRAB_ROUTE_OVERVIEW || "full");
   url.searchParams.set("geometries", env.GRAB_ROUTE_GEOMETRIES || "polyline6");
 
@@ -528,6 +539,7 @@ async function routeGrab(start, end, env, waypoints = []) {
 
   return {
     provider: "Grab Routing API",
+    profile,
     distance: route.distance,
     duration: route.duration,
     geometry: {
@@ -663,10 +675,20 @@ function startsWith67(place) {
   return startsWith67Pattern.test(place.label || "");
 }
 
+function normalizePlaceKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
 function dedupePlaces(places) {
   const seen = new Set();
   return places.filter((place) => {
-    const key = `${place.label}|${place.address}|${place.lat.toFixed(5)}|${place.lng.toFixed(5)}`.toLowerCase();
+    const addressKey = normalizePlaceKey(place.address);
+    const key = addressKey
+      ? `address:${addressKey}`
+      : `point:${normalizePlaceKey(place.label)}|${place.lat.toFixed(5)}|${place.lng.toFixed(5)}`;
     if (seen.has(key)) {
       return false;
     }
@@ -674,6 +696,51 @@ function dedupePlaces(places) {
     seen.add(key);
     return true;
   });
+}
+
+function grabPlaceToPoint(place, fallbackLabel) {
+  const parsedLocation = place && parseGrabPlaceLocation(place.location);
+  if (!place || !parsedLocation) {
+    return null;
+  }
+
+  return {
+    label: place.name || place.formatted_address || fallbackLabel,
+    address: place.formatted_address || "",
+    lat: parsedLocation.lat,
+    lng: parsedLocation.lng,
+    provider: "Grab Places API"
+  };
+}
+
+async function suggestGrabPlaces(query, env, limit) {
+  if (!env.GRAB_API_KEY) {
+    throw new Error("GRAB_API_KEY is required for Grab Places search.");
+  }
+
+  const url = getGrabUrl(env, "GRAB_PLACE_SEARCH_PATH", "/api/v1/maps/poi/v1/search");
+  url.searchParams.set("keyword", query);
+  url.searchParams.set("country", env.GRAB_PLACES_COUNTRY || "SGP");
+  url.searchParams.set(
+    "location",
+    `${numberFromEnv(env, "GRAB_PLACES_BIAS_LAT", 1.3521)},${numberFromEnv(
+      env,
+      "GRAB_PLACES_BIAS_LNG",
+      103.8198
+    )}`
+  );
+  url.searchParams.set("limit", String(limit));
+
+  const payload = await fetchJson(url, {
+    headers: {
+      Authorization: createGrabAuthorizationHeader(env.GRAB_API_KEY)
+    }
+  });
+
+  return dedupePlaces((payload.places || []).map((place) => grabPlaceToPoint(place, query)).filter(Boolean)).slice(
+    0,
+    limit
+  );
 }
 
 async function searchGrabPlaces(query, location, env, limit) {
@@ -690,20 +757,7 @@ async function searchGrabPlaces(query, location, env, limit) {
   });
 
   return (payload.places || [])
-    .map((place) => {
-      const parsedLocation = parseGrabPlaceLocation(place.location);
-      if (!parsedLocation) {
-        return null;
-      }
-
-      return {
-        label: place.name || place.formatted_address || query,
-        address: place.formatted_address || "",
-        lat: parsedLocation.lat,
-        lng: parsedLocation.lng,
-        provider: "Grab Places API"
-      };
-    })
+    .map((place) => grabPlaceToPoint(place, query))
     .filter(Boolean);
 }
 
@@ -718,23 +772,34 @@ async function find67StopsAlongRoute(routeCoordinates, radiusKm, env) {
   const maxStops = Math.min(Math.max(numberFromEnv(env, "GRAB_67_MAX_STOPS", 4), 1), 8);
   const samples = sampleRoute(routeCoordinates, sampleCount);
   const results = [];
+  const failures = [];
 
   for (const sample of samples) {
-    const places = await searchGrabPlaces("67", sample, env, searchLimit);
-    results.push(...places);
+    try {
+      const places = await searchGrabPlaces("67", sample, env, searchLimit);
+      results.push(...places);
+    } catch (error) {
+      failures.push(error);
+    }
   }
 
-  return dedupePlaces(results)
-    .map((place) => {
-      const nearest = nearestRouteDistance(place, routeCoordinates);
-      return {
-        ...place,
-        distanceFromRouteMeters: nearest.distance,
-        routeIndex: nearest.index
-      };
-    })
-    .filter((place) => startsWith67(place) && place.distanceFromRouteMeters <= radiusMeters)
-    .sort((a, b) => a.routeIndex - b.routeIndex || a.distanceFromRouteMeters - b.distanceFromRouteMeters)
+  if (!results.length && failures.length) {
+    throw failures[0];
+  }
+
+  return dedupePlaces(
+    results
+      .map((place) => {
+        const nearest = nearestRouteDistance(place, routeCoordinates);
+        return {
+          ...place,
+          distanceFromRouteMeters: nearest.distance,
+          routeIndex: nearest.index
+        };
+      })
+      .filter((place) => startsWith67(place) && place.distanceFromRouteMeters <= radiusMeters)
+      .sort((a, b) => a.routeIndex - b.routeIndex || a.distanceFromRouteMeters - b.distanceFromRouteMeters)
+  )
     .slice(0, maxStops);
 }
 
@@ -912,6 +977,28 @@ async function handleGeocode(requestUrl, response) {
   }
 }
 
+async function handleSuggest(requestUrl, response) {
+  const env = getEnv();
+  const query = (requestUrl.searchParams.get("q") || "").trim();
+  const requestedLimit = Number(requestUrl.searchParams.get("limit"));
+  const limit = Math.min(Math.max(Number.isFinite(requestedLimit) ? requestedLimit : 5, 1), 8);
+
+  if (query.length < 2) {
+    sendJson(response, 200, { provider: "Grab Places API", places: [] });
+    return;
+  }
+
+  try {
+    const places = await suggestGrabPlaces(query, env, limit);
+    sendJson(response, 200, {
+      provider: "Grab Places API",
+      places
+    });
+  } catch (error) {
+    sendJson(response, 502, { error: error.message || "Place suggestions failed.", places: [] });
+  }
+}
+
 async function handleSearch67(request, response) {
   const env = getEnv();
 
@@ -961,7 +1048,8 @@ async function handleRoute(requestUrl, response) {
     const start = readPointFromQuery(requestUrl, "start");
     const end = readPointFromQuery(requestUrl, "end");
     const waypoints = readWaypointsFromQuery(requestUrl);
-    const result = await routeGrab(start, end, env, waypoints);
+    const profile = readRouteProfile(requestUrl, env);
+    const result = await routeGrab(start, end, env, waypoints, profile);
 
     sendJson(response, 200, result);
   } catch (error) {
@@ -1043,6 +1131,11 @@ const server = http.createServer((request, response) => {
 
   if (requestUrl.pathname === "/api/geocode") {
     handleGeocode(requestUrl, response);
+    return;
+  }
+
+  if (requestUrl.pathname === "/api/suggest") {
+    handleSuggest(requestUrl, response);
     return;
   }
 

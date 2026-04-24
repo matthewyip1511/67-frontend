@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Grab Route Starter</title>
     <link rel="stylesheet" href="/vendor/maplibre-gl.css">
-    <link rel="stylesheet" href="/styles.css?v=route-render-fix-1">
+    <link rel="stylesheet" href="/styles.css?v=marker-dom-1">
   </head>
   <body>
     <main class="app-shell">
@@ -19,32 +19,52 @@
         </div>
 
         <form id="routeForm" class="route-form">
-          <label class="field">
-            <span>Start</span>
+          <div class="field">
+            <label for="startInput">Start</label>
+            <div class="suggestion-shell">
             <input
               id="startInput"
               name="start"
               autocomplete="off"
+              aria-autocomplete="list"
+              aria-controls="startSuggestions"
+              aria-expanded="false"
               placeholder="Marina Bay Sands"
               required
             >
-          </label>
+              <div id="startSuggestions" class="suggestion-list" role="listbox" hidden></div>
+            </div>
+          </div>
 
-          <label class="field">
-            <span>End</span>
+          <div class="field">
+            <label for="endInput">End</label>
+            <div class="suggestion-shell">
             <input
               id="endInput"
               name="end"
               autocomplete="off"
+              aria-autocomplete="list"
+              aria-controls="endSuggestions"
+              aria-expanded="false"
               placeholder="Orchard Road"
               required
             >
-          </label>
+              <div id="endSuggestions" class="suggestion-list" role="listbox" hidden></div>
+            </div>
+          </div>
 
           <div class="button-row">
             <button class="secondary-button" type="button" id="swapButton">Swap</button>
             <button class="primary-button" type="submit" id="routeButton">Route</button>
           </div>
+
+          <label class="field">
+            <span>Travel mode</span>
+            <select id="profileSelect" name="profile">
+              <option value="driving" selected>Driving</option>
+              <option value="walking">Walking</option>
+            </select>
+          </label>
         </form>
 
         <section class="feature-card" aria-label="67 address routing option">
@@ -84,12 +104,26 @@
           </div>
           <div>
             <span>Start</span>
-            <strong id="startValue">-</strong>
+            <p>
+              <strong id="startValue">-</strong>
+              <small id="startAddressValue">-</small>
+            </p>
           </div>
           <div>
             <span>End</span>
-            <strong id="endValue">-</strong>
+            <p>
+              <strong id="endValue">-</strong>
+              <small id="endAddressValue">-</small>
+            </p>
           </div>
+        </section>
+
+        <section class="route-stops" aria-label="Route stops">
+          <div class="route-stops-heading">
+            <span>Route order</span>
+            <small>Start, 67 matches, and end addresses.</small>
+          </div>
+          <ol class="route-stops-list" id="routeStopsList"></ol>
         </section>
 
         <p class="status-line" id="statusLine" role="status">Ready</p>
@@ -111,6 +145,6 @@
 
     <script src="/vendor/maplibre-gl.js"></script>
     <script src="/config.js"></script>
-    <script src="/app.js?v=route-render-fix-1"></script>
+    <script src="/app.js?v=marker-dom-1"></script>
   </body>
 </html>
