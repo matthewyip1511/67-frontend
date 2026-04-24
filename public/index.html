@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Grab Route Starter</title>
+    <link rel="stylesheet" href="/vendor/maplibre-gl.css">
+    <link rel="stylesheet" href="/styles.css?v=route-render-fix-1">
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="route-panel" aria-label="Route controls">
+        <div class="brand-row">
+          <div class="brand-mark">G</div>
+          <div>
+            <h1>Route Starter</h1>
+            <p id="connectionStatus">Provider loading</p>
+          </div>
+        </div>
+
+        <form id="routeForm" class="route-form">
+          <label class="field">
+            <span>Start</span>
+            <input
+              id="startInput"
+              name="start"
+              autocomplete="off"
+              placeholder="Marina Bay Sands"
+              required
+            >
+          </label>
+
+          <label class="field">
+            <span>End</span>
+            <input
+              id="endInput"
+              name="end"
+              autocomplete="off"
+              placeholder="Orchard Road"
+              required
+            >
+          </label>
+
+          <div class="button-row">
+            <button class="secondary-button" type="button" id="swapButton">Swap</button>
+            <button class="primary-button" type="submit" id="routeButton">Route</button>
+          </div>
+        </form>
+
+        <section class="feature-card" aria-label="67 address routing option">
+          <label class="toggle-row">
+            <input id="include67Toggle" type="checkbox">
+            <span>
+              <strong>67 stops</strong>
+              <small>Search nearby addresses starting with 67 and route through them.</small>
+            </span>
+          </label>
+
+          <label class="field compact-field">
+            <span>Inflation radius</span>
+            <input
+              id="radius67Input"
+              type="number"
+              min="0.1"
+              max="5"
+              step="0.1"
+              value="0.8"
+              inputmode="decimal"
+            >
+          </label>
+
+          <p class="feature-status" id="status67">Off</p>
+          <ul class="stop-list" id="list67"></ul>
+        </section>
+
+        <section class="summary" aria-label="Route summary">
+          <div>
+            <span>Distance</span>
+            <strong id="distanceValue">-</strong>
+          </div>
+          <div>
+            <span>Duration</span>
+            <strong id="durationValue">-</strong>
+          </div>
+          <div>
+            <span>Start</span>
+            <strong id="startValue">-</strong>
+          </div>
+          <div>
+            <span>End</span>
+            <strong id="endValue">-</strong>
+          </div>
+        </section>
+
+        <p class="status-line" id="statusLine" role="status">Ready</p>
+      </aside>
+
+      <section class="map-stage" aria-label="Map">
+        <div id="map" class="map">
+          <div id="grabMap" class="grab-map"></div>
+          <svg id="routeLayer" class="route-layer" aria-hidden="true"></svg>
+          <div id="markerLayer" class="marker-layer"></div>
+          <aside id="mapRouteCard" class="map-route-card" aria-live="polite" hidden>
+            <span>Mapped route</span>
+            <strong id="mapRouteTitle">Choose a start and end</strong>
+            <small id="mapRouteMeta">Locations will appear here after routing.</small>
+          </aside>
+        </div>
+      </section>
+    </main>
+
+    <script src="/vendor/maplibre-gl.js"></script>
+    <script src="/config.js"></script>
+    <script src="/app.js?v=route-render-fix-1"></script>
+  </body>
+</html>
